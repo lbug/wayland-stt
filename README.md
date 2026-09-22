@@ -28,7 +28,7 @@ Tested on Ubuntu 26.04 / GNOME 50 (Wayland). Requires PipeWire, `curl`, `jq`, `w
   GNOME restores it on login.
 - **Recording:** `pw-record` (PipeWire), 16 kHz mono, encoded to Opus before upload (~3 KB/s).
 - **API:** `POST https://openrouter.ai/api/v1/audio/transcriptions` (JSON, base64 audio).
-- **Clipboard:** `wl-copy`. **Notification:** only when the text is ready (or on error); while recording, GNOME's own mic indicator shows in the top bar.
+- **Clipboard:** `wl-copy`. **Notification:** a banner when the text is ready (or on error); each one replaces the previous, so the tray holds a single entry. While recording, GNOME's own mic indicator shows in the top bar.
 - Safety: recording auto-stops after `STT_MAX_SECONDS` (600); presses during transcription are ignored.
 
 ## Install
