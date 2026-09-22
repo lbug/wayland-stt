@@ -18,7 +18,7 @@ ffmpeg -loglevel error -f lavfi -i sine=frequency=440:duration=2 -ar 16000 -ac 1
 while :; do sleep 0.05; done
 R
 printf '#!/bin/sh\ncat > "%s/clip"\n' "$T" >"$T/bin/fake-clip"
-printf '#!/bin/sh\necho "$*" >> "%s/notify.log"; echo 7\n' "$T" >"$T/bin/notify-send"
+printf '#!/bin/sh\necho "$*" >> "%s/notify.log"\n' "$T" >"$T/bin/notify-send"
 chmod +x "$T/bin/"*
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT" -o /dev/null && break; sleep 0.1; done
 
@@ -30,14 +30,14 @@ reset() { rm -rf "$T/run/"* "$T/clip" "$T/notify.log" "$MOCK_LOG"; }
 echo "1) happy path: press, press"
 reset; "$S"; sleep 1
 check "recorder running after 1st press" '[[ -s $T/run/wayland-stt/rec.pid ]] && kill -0 $(cat $T/run/wayland-stt/rec.pid)'
-check "start notification" 'grep -q "Aufnahme läuft" $T/notify.log'
+check "no notification on start" '[[ ! -e $T/notify.log ]]'
 out=$("$S")
 check "stdout has trimmed text" '[[ $out == "Hallo Welt, äöü ß – Test." ]]'
 check "clipboard has trimmed text" '[[ $(cat $T/clip) == "Hallo Welt, äöü ß – Test." ]]'
 check "upload was opus/ogg, multipart" 'grep -q "\"has_ogg\": true" $MOCK_LOG && grep -q multipart/form-data $MOCK_LOG'
 check "model sent" 'grep -q "\"model\": true" $MOCK_LOG'
 check "done notification" 'grep -q "In Zwischenablage kopiert" $T/notify.log'
-check "notifications replace one bubble (-r)" 'grep -q -- "-r 7" $T/notify.log'
+check "exactly one notification per dictation" '[[ $(wc -l < $T/notify.log) == 1 ]]'
 check "temp audio cleaned up" '[[ ! -e $T/run/wayland-stt/rec.wav && ! -e $T/run/wayland-stt/busy ]]'
 check "recorder stopped" '! pgrep -f "$T/bin/fake-rec" >/dev/null'
 
@@ -51,7 +51,7 @@ check "exit code != 0" '[[ $rc != 0 ]]'
 check "error notification shows HTTP 401 message" 'grep -q "HTTP 401: No auth credentials" $T/notify.log'
 check "clipboard untouched" '[[ ! -e $T/clip ]]'
 check "busy lock released" '[[ ! -e $T/run/wayland-stt/busy ]]'
-"$S"; sleep 0.3; check "next press starts fresh recording" 'grep -c "Aufnahme läuft" $T/notify.log | grep -q 2'; "$S" >/dev/null
+"$S"; sleep 0.3; check "next press starts fresh recording" '[[ -s $T/run/wayland-stt/rec.pid ]]'; "$S" >/dev/null
 
 echo "4) missing API key"
 reset; "$S"; sleep 1; OPENROUTER_API_KEY= "$S" 2>/dev/null
@@ -80,6 +80,6 @@ out=$("$S"); check "leftover audio transcribed" '[[ -n $out ]]'
 
 echo "9) stale pid without audio -> starts new recording"
 reset; mkdir -p $T/run/wayland-stt; echo 999999 > $T/run/wayland-stt/rec.pid; "$S"; sleep 0.3
-check "new recording started" 'grep -q "Aufnahme läuft" $T/notify.log'; "$S" >/dev/null
+check "new recording started" '[[ $(cat $T/run/wayland-stt/rec.pid) != 999999 ]]'; "$S" >/dev/null
 
 echo; echo "$pass passed, $fail failed"; exit $((fail > 0))

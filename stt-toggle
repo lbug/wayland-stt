@@ -17,24 +17,19 @@ STATE="${XDG_RUNTIME_DIR:-/tmp}/wayland-stt"
 PID="$STATE/rec.pid"
 WAV="$STATE/rec.wav"
 OGG="$STATE/rec.ogg"
-NID="$STATE/notify.id"
 BUSY="$STATE/busy"
 mkdir -p -m 700 "$STATE"
 
-notify() { # notify <urgency> <title> [body]; keeps updating one bubble
-  local id; id=$(cat "$NID" 2>/dev/null)
-  notify-send -a "Speech-to-Text" -u "$1" -h string:x-canonical-private-synchronous:wayland-stt \
-    ${id:+-r "$id"} -p "$2" "${3:-}" >"$NID" 2>/dev/null || true
-}
+# Only results and errors notify; GNOME's top-bar mic indicator shows an active recording.
+notify() { notify-send -a "Speech-to-Text" -u "$1" "$2" "${3:-}" 2>/dev/null || true; }
 
 fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY"; exit 1; }
 
 start() {
   command -v "$STT_RECORDER" >/dev/null || fail "$STT_RECORDER nicht gefunden"
-  rm -f "$WAV" "$OGG" "$NID"
+  rm -f "$WAV" "$OGG"
   setsid timeout "$STT_MAX_SECONDS" "$STT_RECORDER" --rate 16000 --channels 1 "$WAV" </dev/null >/dev/null 2>&1 &
   echo $! >"$PID"
-  notify normal "🎙 Aufnahme läuft" "Hotkey erneut drücken zum Beenden"
 }
 
 stop_and_transcribe() {
@@ -46,7 +41,6 @@ stop_and_transcribe() {
 
   [[ -s $WAV ]] || fail "Keine Audiodaten aufgenommen"
   [[ -n ${OPENROUTER_API_KEY:-} ]] || fail "OPENROUTER_API_KEY fehlt in $CONFIG"
-  notify normal "⏳ Transkribiere …"
 
   # Opus shrinks the upload ~10x vs. WAV; fall back to WAV if ffmpeg is missing.
   local file=$WAV
