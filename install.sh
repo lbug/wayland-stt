@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Installs stt-toggle to ~/.local/bin and binds it to a GNOME shortcut (default F10).
+# Installs stt-toggle to ~/.local/bin and binds it to a GNOME shortcut (default F9).
 # Usage: ./install.sh [KEY]      e.g. ./install.sh '<Super>h'
 #        ./install.sh --uninstall
 set -euo pipefail
-KEY=${1:-F10}
+KEY=${1:-F9}
 BIN=$HOME/.local/bin/stt-toggle
 CFG=${XDG_CONFIG_HOME:-$HOME/.config}/wayland-stt/config
 SCHEMA=org.gnome.settings-daemon.plugins.media-keys
