@@ -60,8 +60,17 @@ All settings live in `~/.config/wayland-stt/config` (re-read on every key press,
 STT_PHRASES="Pydantic AI, ColBERT, vLLM, Qdrant, Langfuse"
 ```
 
-Live test, German speech — without list: *„Paidantic AI … Re-Ranking mit Call-Bert … servieren es mit VLM“*;
-with list: *„Pydantic AI … Reranking mit ColBERT … servieren es mit vLLM“*.
+Real-voice test (German sentences full of AI jargon, same speaker, same pronunciation):
+
+| | without list | with list |
+|---|---|---|
+| Pydantic AI | Pedantic AI | Pydantic AI |
+| Reranking mit ColBERT | Ranking mit Colbert | Reranking mit ColBERT |
+| vLLM | VLLM | vLLM |
+| pgvector und Qdrant | pgvector und Qutrend | pgvector und Qdrant |
+| Evals … Ragas | Events … Regas | Evals … Ragas |
+
+8 jargon errors → 0. Common acronyms (RLHF, DPO, GGUF, KV-Cache, MCP) were already right without a list.
 Sent as Azure `phraseList`, so it works with `microsoft/mai-transcribe-*`; other models ignore it.
 
 Available models:
