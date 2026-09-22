@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# stt-toggle — press once: start recording; press again: transcribe via
+# OpenRouter and copy the text to the Wayland clipboard.
+set -uo pipefail
+
+CONFIG="${STT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/wayland-stt/config}"
+[[ -r $CONFIG ]] && . "$CONFIG"
+
+: "${STT_MODEL:=microsoft/mai-transcribe-2}"
+: "${STT_LANGUAGE:=}"                       # empty = auto-detect
+: "${STT_API_URL:=https://openrouter.ai/api/v1/audio/transcriptions}"
+: "${STT_RECORDER:=pw-record}"
+: "${STT_MAX_SECONDS:=600}"                 # safety stop for forgotten recordings
+: "${STT_CLIP:=wl-copy}"
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/wayland-stt"
+PID="$STATE/rec.pid"
+WAV="$STATE/rec.wav"
+OGG="$STATE/rec.ogg"
+NID="$STATE/notify.id"
+BUSY="$STATE/busy"
+mkdir -p -m 700 "$STATE"
+
+notify() { # notify <urgency> <title> [body]; keeps updating one bubble
+  local id; id=$(cat "$NID" 2>/dev/null)
+  notify-send -a "Speech-to-Text" -u "$1" -h string:x-canonical-private-synchronous:wayland-stt \
+    ${id:+-r "$id"} -p "$2" "${3:-}" >"$NID" 2>/dev/null || true
+}
+
+fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY"; exit 1; }
+
+start() {
+  command -v "$STT_RECORDER" >/dev/null || fail "$STT_RECORDER nicht gefunden"
+  rm -f "$WAV" "$OGG" "$NID"
+  setsid timeout "$STT_MAX_SECONDS" "$STT_RECORDER" --rate 16000 --channels 1 "$WAV" </dev/null >/dev/null 2>&1 &
+  echo $! >"$PID"
+  notify normal "🎙 Aufnahme läuft" "Erneut F11 drücken zum Beenden"
+}
+
+stop_and_transcribe() {
+  local pid; pid=$(cat "$PID"); rm -f "$PID"
+  touch "$BUSY"
+  kill -INT "$pid" 2>/dev/null
+  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$pid" 2>/dev/null && kill -TERM "$pid"
+
+  [[ -s $WAV ]] || fail "Keine Audiodaten aufgenommen"
+  [[ -n ${OPENROUTER_API_KEY:-} ]] || fail "OPENROUTER_API_KEY fehlt in $CONFIG"
+  notify normal "⏳ Transkribiere …"
+
+  # Opus shrinks the upload ~10x vs. WAV; fall back to WAV if ffmpeg is missing.
+  local file=$WAV
+  if command -v ffmpeg >/dev/null && ffmpeg -loglevel error -y -i "$WAV" -c:a libopus -b:a 24k "$OGG"; then
+    file=$OGG
+  fi
+
+  local resp code text
+  resp=$(curl -sS --max-time 120 -w '\n%{http_code}' "$STT_API_URL" \
+    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    -F "model=$STT_MODEL" -F "file=@$file" ${STT_LANGUAGE:+-F "language=$STT_LANGUAGE"} 2>&1) \
+    || fail "Netzwerkfehler: ${resp##*$'\n'}"
+  code=${resp##*$'\n'}; resp=${resp%$'\n'*}
+  [[ $code == 200 ]] || fail "HTTP $code: $(jq -r '.error.message // .' <<<"$resp" 2>/dev/null | head -c 200)"
+  text=$(jq -r '.text // empty' <<<"$resp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  [[ -n $text ]] || fail "Leeres Transkript"
+
+  printf %s "$text" | "$STT_CLIP" || fail "Konnte nicht in die Zwischenablage kopieren ($STT_CLIP)"
+  notify low "✅ In Zwischenablage kopiert" "$(head -c 200 <<<"$text")"
+  printf '%s\n' "$text"
+  rm -f "$BUSY" "$WAV" "$OGG"
+}
+
+if [[ -e $BUSY ]] && (( $(date +%s) - $(stat -c %Y "$BUSY") < 180 )); then
+  notify normal "⏳ Transkription läuft noch …"; exit 0
+fi
+if [[ -s $PID ]] && kill -0 "$(cat "$PID")" 2>/dev/null; then
+  stop_and_transcribe
+elif [[ -s $PID && -s $WAV ]]; then
+  stop_and_transcribe   # recorder hit STT_MAX_SECONDS; still send what we have
+else
+  start
+fi
