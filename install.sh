@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs stt-toggle to ~/.local/bin and binds it to a GNOME shortcut (default F9).
+# Symlinks stt-toggle into ~/.local/bin and binds it to a GNOME shortcut (default F9).
 # Usage: ./install.sh [KEY]      e.g. ./install.sh '<Super>h'
 #        ./install.sh --uninstall
 set -euo pipefail
@@ -21,7 +21,10 @@ for dep in pw-record curl jq notify-send wl-copy; do
   command -v $dep >/dev/null || { echo "Missing: $dep  (sudo apt install wl-clipboard jq curl pipewire-bin libnotify-bin)"; exit 1; }
 done
 
-install -Dm755 "$(dirname "$0")/stt-toggle" "$BIN"
+# Symlink so edits in the repo take effect on the next key press; rerun only to change the key.
+mkdir -p "$(dirname "$BIN")"
+ln -sfn "$(realpath "$(dirname "$0")/stt-toggle")" "$BIN"
+git -C "$(dirname "$0")" config core.hooksPath .githooks 2>/dev/null || true
 if [[ ! -e $CFG ]]; then
   install -Dm600 "$(dirname "$0")/config.example" "$CFG"
   echo "Created $CFG — put your OpenRouter key there."

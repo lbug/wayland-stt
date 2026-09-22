@@ -1,0 +1,6 @@
+#!/bin/sh
+# Refuse commits that add a real OpenRouter key (the placeholder sk-or-v1-... is fine).
+if git diff --cached -U0 | grep -qE '^\+.*sk-or-v1-[A-Za-z0-9]{20,}'; then
+  echo "pre-commit: OpenRouter API key in staged changes — put it in ~/.config/wayland-stt/config instead." >&2
+  exit 1
+fi

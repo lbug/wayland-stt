@@ -24,7 +24,10 @@ sudo apt install wl-clipboard      # only missing dependency on a stock Ubuntu 2
 $EDITOR ~/.config/wayland-stt/config   # set OPENROUTER_API_KEY
 ```
 
-Uninstall: `./install.sh --uninstall`.
+`install.sh` symlinks the script, so edits in this repo are live on the next key press;
+rerun it only to change the key. Uninstall: `./install.sh --uninstall`.
+
+A pre-commit hook (`.githooks/`, enabled by `install.sh`) blocks commits containing a real API key.
 
 Note: F9 is then taken globally. It is unbound in GNOME and rarely used by apps.
 
