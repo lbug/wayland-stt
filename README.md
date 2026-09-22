@@ -1,7 +1,7 @@
 # wayland-stt
 
 Push-to-toggle dictation for Ubuntu/GNOME on Wayland.
-Press **F11** → recording starts. Press **F11** again → audio goes to OpenRouter
+Press **F10** → recording starts. Press **F10** again → audio goes to OpenRouter
 (`microsoft/mai-transcribe-2`), the text lands in the clipboard, a notification confirms it.
 
 One ~90-line bash script, no daemon, no background process while idle.
@@ -26,7 +26,8 @@ $EDITOR ~/.config/wayland-stt/config   # set OPENROUTER_API_KEY
 
 Uninstall: `./install.sh --uninstall`.
 
-Note: F11 is then taken globally, so app fullscreen toggles (browser, terminal) no longer see it.
+Note: F10 is then taken globally; GTK apps and Ptyxis use plain F10 to open their main menu
+(rarely needed, the menu button still works). `<Alt>F10` (maximize) is unaffected.
 
 ## Test
 

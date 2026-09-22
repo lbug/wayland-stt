@@ -34,7 +34,7 @@ start() {
   rm -f "$WAV" "$OGG" "$NID"
   setsid timeout "$STT_MAX_SECONDS" "$STT_RECORDER" --rate 16000 --channels 1 "$WAV" </dev/null >/dev/null 2>&1 &
   echo $! >"$PID"
-  notify normal "🎙 Aufnahme läuft" "Erneut F11 drücken zum Beenden"
+  notify normal "🎙 Aufnahme läuft" "Hotkey erneut drücken zum Beenden"
 }
 
 stop_and_transcribe() {
