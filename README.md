@@ -27,6 +27,23 @@ $EDITOR ~/.config/wayland-stt/config   # set OPENROUTER_API_KEY
 `install.sh` symlinks the script, so edits in this repo are live on the next key press;
 rerun it only to change the key. Uninstall: `./install.sh --uninstall`.
 
+## Configuration
+
+All settings live in `~/.config/wayland-stt/config` (re-read on every key press, no reinstall):
+
+| Variable | Default | |
+|---|---|---|
+| `OPENROUTER_API_KEY` | — | required |
+| `STT_MODEL` | `microsoft/mai-transcribe-2` | any OpenRouter transcription model |
+| `STT_LANGUAGE` | auto-detect | ISO-639-1, e.g. `de` |
+| `STT_MAX_SECONDS` | `600` | recording safety stop |
+
+Available models:
+
+```bash
+curl -s "https://openrouter.ai/api/v1/models?output_modalities=transcription" | jq -r '.data[].id'
+```
+
 A pre-commit hook (`.githooks/`, enabled by `install.sh`) blocks commits containing a real API key.
 
 Note: F9 is then taken globally. It is unbound in GNOME and rarely used by apps.
