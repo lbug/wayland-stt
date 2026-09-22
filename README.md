@@ -4,7 +4,22 @@ Push-to-toggle dictation for Ubuntu/GNOME on Wayland.
 Press **F9** → recording starts. Press **F9** again → audio goes to OpenRouter
 (`microsoft/mai-transcribe-2`), the text lands in the clipboard, a notification confirms it.
 
-One ~90-line bash script, no daemon, no background process while idle.
+One ~80-line bash script, no daemon, no background process while idle.
+
+## Why another dictation tool?
+
+Most Linux dictation tools run local models and type text via `ydotool`/uinput, which needs
+root or the `input` group plus a background daemon, and global hotkeys are often fragile on
+GNOME Wayland. wayland-stt takes the opposite trade-off:
+
+- **Native GNOME shortcut** — no key grabbing, no autostart, works on Wayland as designed.
+- **Clipboard, not typing** — no extra privileges; paste wherever you want with Ctrl+V.
+- **Cloud model via OpenRouter** — top-tier accuracy (60 languages, code switching), ~1 s latency,
+  swap models with one config line. Audio leaves your machine; if you need offline, use
+  a local-model tool such as Speech Note or nerd-dictation instead.
+
+Tested on Ubuntu 26.04 / GNOME 50 (Wayland). Requires PipeWire, `curl`, `jq`, `wl-clipboard`,
+`libnotify`; `ffmpeg` is optional (Opus compression, ~10× smaller uploads).
 
 ## How it works
 
@@ -53,3 +68,7 @@ Note: F9 is then taken globally. It is unbound in GNOME and rarely used by apps.
 ```bash
 tests/run.sh    # offline: fake recorder/clipboard/notify + mock API
 ```
+
+## License
+
+MIT
