@@ -8,6 +8,7 @@ CONFIG="${STT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/wayland-stt/config}"
 
 : "${STT_MODEL:=microsoft/mai-transcribe-2}"
 : "${STT_LANGUAGE:=}"                       # empty = auto-detect
+: "${STT_PHRASES:=}"                        # comma-separated terms to bias recognition towards
 : "${STT_API_URL:=https://openrouter.ai/api/v1/audio/transcriptions}"
 : "${STT_RECORDER:=pw-record}"
 : "${STT_MAX_SECONDS:=600}"                 # safety stop for forgotten recordings
@@ -18,12 +19,13 @@ PID="$STATE/rec.pid"
 WAV="$STATE/rec.wav"
 OGG="$STATE/rec.ogg"
 BUSY="$STATE/busy"
+REQ="$STATE/req.json"
 mkdir -p -m 700 "$STATE"
 
 # Only results and errors notify; GNOME's top-bar mic indicator shows an active recording.
 notify() { notify-send -a "Speech-to-Text" -u "$1" "$2" "${3:-}" 2>/dev/null || true; }
 
-fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY"; exit 1; }
+fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY" "$REQ"; exit 1; }
 
 start() {
   command -v "$STT_RECORDER" >/dev/null || fail "$STT_RECORDER nicht gefunden"
@@ -48,10 +50,20 @@ stop_and_transcribe() {
     file=$OGG
   fi
 
+  # JSON body (base64 audio) because keyword biasing needs nested provider options.
+  # phraseList is Azure's format (MAI-Transcribe); other providers ignore it.
+  base64 -w0 "$file" | jq -Rs --arg m "$STT_MODEL" --arg f "${file##*.}" \
+      --arg l "$STT_LANGUAGE" --arg p "$STT_PHRASES" '
+    ($p | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $ph
+    | {model: $m, input_audio: {data: ., format: $f}}
+    + (if $l != "" then {language: $l} else {} end)
+    + (if $ph != [] then {provider: {options: {azure: {phraseList: {phrases: $ph}}}}} else {} end)' >"$REQ" \
+    || fail "Konnte Anfrage nicht erstellen"
+
   local resp code text
   resp=$(curl -sS --max-time 120 -w '\n%{http_code}' "$STT_API_URL" \
-    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-    -F "model=$STT_MODEL" -F "file=@$file" ${STT_LANGUAGE:+-F "language=$STT_LANGUAGE"} 2>&1) \
+    -H "Authorization: Bearer $OPENROUTER_API_KEY" -H 'Content-Type: application/json' \
+    --data-binary @"$REQ" 2>&1) \
     || fail "Netzwerkfehler: ${resp##*$'\n'}"
   code=${resp##*$'\n'}; resp=${resp%$'\n'*}
   [[ $code == 200 ]] || fail "HTTP $code: $(jq -r '.error.message // .' <<<"$resp" 2>/dev/null | head -c 200)"
@@ -61,7 +73,7 @@ stop_and_transcribe() {
   printf %s "$text" | "$STT_CLIP" || fail "Konnte nicht in die Zwischenablage kopieren ($STT_CLIP)"
   notify low "✅ In Zwischenablage kopiert" "$(head -c 200 <<<"$text")"
   printf '%s\n' "$text"
-  rm -f "$BUSY" "$WAV" "$OGG"
+  rm -f "$BUSY" "$WAV" "$OGG" "$REQ"
 }
 
 if [[ -e $BUSY ]] && (( $(date +%s) - $(stat -c %Y "$BUSY") < 180 )); then

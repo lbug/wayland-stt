@@ -27,7 +27,7 @@ Tested on Ubuntu 26.04 / GNOME 50 (Wayland). Requires PipeWire, `curl`, `jq`, `w
   keys, so the compositor's own shortcut system is the native way — and it needs no autostart,
   GNOME restores it on login.
 - **Recording:** `pw-record` (PipeWire), 16 kHz mono, encoded to Opus before upload (~3 KB/s).
-- **API:** `POST https://openrouter.ai/api/v1/audio/transcriptions` (multipart, OpenAI-compatible).
+- **API:** `POST https://openrouter.ai/api/v1/audio/transcriptions` (JSON, base64 audio).
 - **Clipboard:** `wl-copy`. **Notification:** only when the text is ready (or on error); while recording, GNOME's own mic indicator shows in the top bar.
 - Safety: recording auto-stops after `STT_MAX_SECONDS` (600); presses during transcription are ignored.
 
@@ -51,7 +51,18 @@ All settings live in `~/.config/wayland-stt/config` (re-read on every key press,
 | `OPENROUTER_API_KEY` | — | required |
 | `STT_MODEL` | `microsoft/mai-transcribe-2` | any OpenRouter transcription model |
 | `STT_LANGUAGE` | auto-detect | ISO-639-1, e.g. `de` |
+| `STT_PHRASES` | empty | comma-separated terms to bias recognition towards (see below) |
 | `STT_MAX_SECONDS` | `600` | recording safety stop |
+
+**Keyword biasing.** Names and jargon you dictate often come out right when listed:
+
+```
+STT_PHRASES="Pydantic AI, ColBERT, vLLM, Qdrant, Langfuse"
+```
+
+Live test, German speech — without list: *„Paidantic AI … Re-Ranking mit Call-Bert … servieren es mit VLM“*;
+with list: *„Pydantic AI … Reranking mit ColBERT … servieren es mit vLLM“*.
+Sent as Azure `phraseList`, so it works with `microsoft/mai-transcribe-*`; other models ignore it.
 
 Available models:
 

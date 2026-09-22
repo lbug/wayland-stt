@@ -34,16 +34,23 @@ check "no notification on start" '[[ ! -e $T/notify.log ]]'
 out=$("$S")
 check "stdout has trimmed text" '[[ $out == "Hallo Welt, äöü ß – Test." ]]'
 check "clipboard has trimmed text" '[[ $(cat $T/clip) == "Hallo Welt, äöü ß – Test." ]]'
-check "upload was opus/ogg, multipart" 'grep -q "\"has_ogg\": true" $MOCK_LOG && grep -q multipart/form-data $MOCK_LOG'
-check "model sent" 'grep -q "\"model\": true" $MOCK_LOG'
+check "upload is JSON with base64 opus/ogg" 'grep -q "\"has_ogg\": true" $MOCK_LOG && grep -q "\"format\": \"ogg\"" $MOCK_LOG && grep -q application/json $MOCK_LOG'
+check "model sent" 'grep -q "\"model\": \"microsoft/mai-transcribe-2\"" $MOCK_LOG'
+check "no language/provider by default" 'grep -q "\"language\": null, \"provider\": null" $MOCK_LOG'
 check "done notification" 'grep -q "In Zwischenablage kopiert" $T/notify.log'
 check "exactly one notification per dictation" '[[ $(wc -l < $T/notify.log) == 1 ]]'
-check "temp audio cleaned up" '[[ ! -e $T/run/wayland-stt/rec.wav && ! -e $T/run/wayland-stt/busy ]]'
+check "temp files cleaned up" '[[ ! -e $T/run/wayland-stt/rec.wav && ! -e $T/run/wayland-stt/req.json && ! -e $T/run/wayland-stt/busy ]]'
 check "recorder stopped" '! pgrep -f "$T/bin/fake-rec" >/dev/null'
 
 echo "2) language option"
 reset; STT_LANGUAGE=de "$S"; sleep 1; STT_LANGUAGE=de "$S" >/dev/null
-check "language=de sent" 'grep -q "\"lang_de\": true" $MOCK_LOG'
+check "language=de sent" 'grep -q "\"language\": \"de\"" $MOCK_LOG'
+
+echo "2b) keyword biasing"
+reset; STT_PHRASES=" Vicinae,Ptyxis , ,wayland-stt " "$S"; sleep 1; STT_PHRASES=" Vicinae,Ptyxis , ,wayland-stt " "$S" >/dev/null
+check "phrases trimmed, empties dropped, azure phraseList" 'grep -q "\"provider\": {\"options\": {\"azure\": {\"phraseList\": {\"phrases\": \[\"Vicinae\", \"Ptyxis\", \"wayland-stt\"\]}}}}" $MOCK_LOG'
+reset; STT_PHRASES=" , " "$S"; sleep 1; STT_PHRASES=" , " "$S" >/dev/null
+check "blank phrase list sends no provider options" 'grep -q "\"provider\": null" $MOCK_LOG'
 
 echo "3) wrong API key"
 reset; "$S"; sleep 1; OPENROUTER_API_KEY=bad "$S" 2>/dev/null; rc=$?

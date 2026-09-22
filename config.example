@@ -2,4 +2,5 @@
 OPENROUTER_API_KEY=sk-or-v1-...
 #STT_MODEL=microsoft/mai-transcribe-2
 #STT_LANGUAGE=de          # ISO-639-1; leave unset for auto-detect / code switching
+#STT_PHRASES="Vicinae, Ptyxis, OpenRouter"   # terms to bias recognition (MAI models)
 #STT_MAX_SECONDS=600
