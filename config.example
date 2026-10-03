@@ -4,3 +4,5 @@ OPENROUTER_API_KEY=sk-or-v1-...
 #STT_LANGUAGE=de          # ISO-639-1; leave unset for auto-detect / code switching
 #STT_PHRASES="Vicinae, Ptyxis, OpenRouter"   # terms to bias recognition (MAI models)
 #STT_MAX_SECONDS=600
+#STT_RETRIES=5          # retries on HTTP 429/5xx
+#STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe   # used if the main model stays 429/5xx; empty = off

@@ -12,6 +12,8 @@ CONFIG="${STT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/wayland-stt/config}"
 : "${STT_API_URL:=https://openrouter.ai/api/v1/audio/transcriptions}"
 : "${STT_RECORDER:=pw-record}"
 : "${STT_MAX_SECONDS:=600}"                 # safety stop for forgotten recordings
+: "${STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe}"  # tried once retries are exhausted; empty = off
+: "${STT_RETRIES:=5}"                       # retries on HTTP 429/5xx (waits: Retry-After, else 2,4,8,… s)
 : "${STT_CLIP:=wl-copy}"
 
 STATE="${XDG_RUNTIME_DIR:-/tmp}/wayland-stt"
@@ -20,6 +22,7 @@ WAV="$STATE/rec.wav"
 OGG="$STATE/rec.ogg"
 BUSY="$STATE/busy"
 REQ="$STATE/req.json"
+HDR="$STATE/resp.hdr"
 NID="$STATE/notify.id"
 mkdir -p -m 700 "$STATE"
 
@@ -33,13 +36,34 @@ notify() {
   rm -f "$NID.tmp"
 }
 
-fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY" "$REQ"; exit 1; }
+fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY" "$REQ" "$HDR"; exit 1; }
 
 start() {
   command -v "$STT_RECORDER" >/dev/null || fail "$STT_RECORDER nicht gefunden"
   rm -f "$WAV" "$OGG"
   setsid timeout "$STT_MAX_SECONDS" "$STT_RECORDER" --rate 16000 --channels 1 "$WAV" </dev/null >/dev/null 2>&1 &
   echo $! >"$PID"
+}
+
+# POST $REQ, retrying 429/5xx; leaves the result in the caller's $resp and $code.
+post_with_retries() {
+  local wait attempt=0
+  while :; do
+    resp=$(curl -sS --max-time 120 -D "$HDR" -w '\n%{http_code}' "$STT_API_URL" \
+      -H "Authorization: Bearer $OPENROUTER_API_KEY" -H 'Content-Type: application/json' \
+      --data-binary @"$REQ" 2>&1) \
+      || fail "Netzwerkfehler: ${resp##*$'\n'}"
+    code=${resp##*$'\n'}; resp=${resp%$'\n'*}
+    [[ $code == 429 || $code == 5?? ]] && (( attempt < STT_RETRIES )) || break
+    wait=$(awk 'tolower($1) == "retry-after:" {gsub(/\r/, "", $2); w = $2} END {print w}' "$HDR")
+    [[ $wait =~ ^[0-9]+$ ]] || wait=$(( 2 ** (attempt + 1) ))
+    (( wait > 60 )) && wait=60
+    ((attempt++))
+    notify normal "⏳ HTTP $code, neuer Versuch in ${wait}s" "Versuch $attempt von $STT_RETRIES"
+    echo "stt-toggle: HTTP $code ($(jq -r .model "$REQ")), Versuch $attempt/$STT_RETRIES in ${wait}s" >&2
+    sleep "$wait"
+    touch "$BUSY"   # keep the lock fresh so a press during a long retry isn't treated as stale
+  done
 }
 
 stop_and_transcribe() {
@@ -69,11 +93,13 @@ stop_and_transcribe() {
     || fail "Konnte Anfrage nicht erstellen"
 
   local resp code text
-  resp=$(curl -sS --max-time 120 -w '\n%{http_code}' "$STT_API_URL" \
-    -H "Authorization: Bearer $OPENROUTER_API_KEY" -H 'Content-Type: application/json' \
-    --data-binary @"$REQ" 2>&1) \
-    || fail "Netzwerkfehler: ${resp##*$'\n'}"
-  code=${resp##*$'\n'}; resp=${resp%$'\n'*}
+  post_with_retries
+  if [[ $code == 429 || $code == 5?? ]] && [[ -n $STT_FALLBACK_MODEL && $STT_FALLBACK_MODEL != "$STT_MODEL" ]]; then
+    notify normal "⏳ $STT_MODEL nicht erreichbar (HTTP $code)" "Weiche auf $STT_FALLBACK_MODEL aus"
+    jq --arg m "$STT_FALLBACK_MODEL" '.model = $m' "$REQ" >"$REQ.tmp" && mv "$REQ.tmp" "$REQ" \
+      || fail "Konnte Fallback-Anfrage nicht erstellen"
+    post_with_retries
+  fi
   [[ $code == 200 ]] || fail "HTTP $code: $(jq -r '.error.message // .' <<<"$resp" 2>/dev/null | head -c 200)"
   text=$(jq -r '.text // empty' <<<"$resp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   [[ -n $text ]] || fail "Leeres Transkript"
@@ -81,7 +107,7 @@ stop_and_transcribe() {
   printf %s "$text" | "$STT_CLIP" || fail "Konnte nicht in die Zwischenablage kopieren ($STT_CLIP)"
   notify normal "✅ In Zwischenablage kopiert" "$(head -c 200 <<<"$text")"
   [[ -t 1 ]] && printf '%s\n' "$text"   # not via the shortcut: stdout would land in the journal
-  rm -f "$BUSY" "$WAV" "$OGG" "$REQ"
+  rm -f "$BUSY" "$WAV" "$OGG" "$REQ" "$HDR"
 }
 
 if [[ -e $BUSY ]] && (( $(date +%s) - $(stat -c %Y "$BUSY") < 180 )); then

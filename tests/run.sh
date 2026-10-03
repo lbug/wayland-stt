@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d); trap 'kill $SRV 2>/dev/null; rm -rf "$T"' EXIT
 PORT=$((20000 + RANDOM % 20000))
 export MOCK_LOG=$T/api.log XDG_RUNTIME_DIR=$T/run STT_CONFIG=$T/none
+export STT_FALLBACK_MODEL=   # off by default in tests; test 11 enables it
 export STT_API_URL=http://127.0.0.1:$PORT/ OPENROUTER_API_KEY=test-key
 export STT_RECORDER=$T/bin/fake-rec STT_CLIP=$T/bin/fake-clip PATH=$T/bin:$PATH
 mkdir -p "$T/bin" "$T/run"
@@ -91,5 +92,41 @@ check "next notification replaces the previous one (-r id)" 'grep -q -- "-r 7" $
 echo "9) stale pid without audio -> starts new recording"
 reset; mkdir -p $T/run/wayland-stt; echo 999999 > $T/run/wayland-stt/rec.pid; "$S"; sleep 0.3
 check "new recording started" '[[ $(cat $T/run/wayland-stt/rec.pid) != 999999 ]]'; "$S" >/dev/null
+
+serve() { kill $SRV; MOCK_MODE=$1 MOCK_FAIL_MODEL=${2:-} python3 "$ROOT/tests/mock_server.py" $PORT & SRV=$!; sleep 0.5; }
+
+echo "10) 429 is retried (Retry-After honoured), recording is not lost"
+reset; serve 429:2
+"$S"; sleep 1; "$S" 2>/dev/null
+check "succeeds after two 429s" '[[ $(cat $T/clip) == "Hallo Welt, äöü ß – Test." ]]'
+check "three requests sent" '[[ $(wc -l < $MOCK_LOG) == 3 ]]'
+check "retry notified, then replaced by result" 'grep -q "HTTP 429, neuer Versuch in 0s" $T/notify.log && grep -q "In Zwischenablage kopiert" $T/notify.log'
+check "busy lock released" '[[ ! -e $T/run/wayland-stt/busy ]]'
+
+echo "10b) 429 beyond STT_RETRIES gives up with the error"
+reset; serve 429:99
+"$S"; sleep 1; STT_RETRIES=2 "$S" 2>/dev/null; rc=$?
+check "exit code != 0" '[[ $rc != 0 ]]'
+check "1 try + 2 retries" '[[ $(wc -l < $MOCK_LOG) == 3 ]]'
+check "error shows HTTP 429" 'grep -q "HTTP 429: Rate limit exceeded" $T/notify.log'
+
+echo "10c) 5xx is retried with backoff when no Retry-After"
+reset; serve 503:1
+"$S"; sleep 1; "$S" 2>/dev/null
+check "succeeds after one 503" '[[ -s $T/clip && $(wc -l < $MOCK_LOG) == 2 ]]'
+
+echo "11) primary model stays rate-limited -> fallback model"
+reset; serve ok microsoft/mai-transcribe-2
+"$S"; sleep 1; STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe STT_RETRIES=1 "$S" 2>/dev/null
+check "transcript from fallback in clipboard" '[[ $(cat $T/clip) == "Hallo Welt, äöü ß – Test." ]]'
+check "primary tried 1+1, then fallback once" '[[ $(grep -c mai-transcribe-2 $MOCK_LOG) == 2 && $(grep -c gpt-4o-mini-transcribe $MOCK_LOG) == 1 ]]'
+check "fallback announced" 'grep -q "Weiche auf openai/gpt-4o-mini-transcribe aus" $T/notify.log'
+reset
+"$S"; sleep 1; STT_RETRIES=1 "$S" 2>/dev/null; rc=$?
+check "empty STT_FALLBACK_MODEL disables fallback" '[[ $rc != 0 && ! -s $T/clip ]] && ! grep -q gpt-4o-mini $MOCK_LOG'
+reset; serve 429:99
+"$S"; sleep 1; STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe STT_RETRIES=0 "$S" 2>/dev/null
+check "fallback also failing -> error, clipboard untouched" '[[ ! -s $T/clip ]] && grep -q "HTTP 429" $T/notify.log'
+serve ok
 
 echo; echo "$pass passed, $fail failed"; exit $((fail > 0))
