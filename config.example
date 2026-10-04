@@ -6,3 +6,4 @@ OPENROUTER_API_KEY=sk-or-v1-...
 #STT_MAX_SECONDS=600
 #STT_RETRIES=5          # retries on HTTP 429/5xx
 #STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe   # used if the main model stays 429/5xx; empty = off
+#STT_LOCAL_MODEL=parakeet-tdt   # Shift+F9 (stt-toggle --local): offline via nemo-speech, no fallback to the cloud

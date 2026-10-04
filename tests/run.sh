@@ -7,7 +7,7 @@ PORT=$((20000 + RANDOM % 20000))
 export MOCK_LOG=$T/api.log XDG_RUNTIME_DIR=$T/run STT_CONFIG=$T/none
 export STT_FALLBACK_MODEL=   # off by default in tests; test 11 enables it
 export STT_API_URL=http://127.0.0.1:$PORT/ OPENROUTER_API_KEY=test-key
-export STT_RECORDER=$T/bin/fake-rec STT_CLIP=$T/bin/fake-clip PATH=$T/bin:$PATH
+export STT_LOCAL_BIN=$T/bin/fake-nemo STT_RECORDER=$T/bin/fake-rec STT_CLIP=$T/bin/fake-clip PATH=$T/bin:$PATH
 mkdir -p "$T/bin" "$T/run"
 python3 "$ROOT/tests/mock_server.py" $PORT & SRV=$!
 
@@ -20,6 +20,15 @@ while :; do sleep 0.05; done
 R
 printf '#!/bin/sh\ncat > "%s/clip"\n' "$T" >"$T/bin/fake-clip"
 printf '#!/bin/sh\necho "$*" >> "%s/notify.log"; echo 7\n' "$T" >"$T/bin/notify-send"
+cat >"$T/bin/fake-nemo" <<'N'
+#!/bin/sh
+# mimics `nemo-speech transcribe WAV -m MODEL -o OUT`
+echo "$*" >> "$FAKE_NEMO_LOG"
+[ -n "${FAKE_NEMO_FAIL:-}" ] && { echo "CUDA kaputt" >&2; exit 1; }
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+printf '  Lokal diktiert, 1250 Zahlen.\n' > "$out"
+N
+export FAKE_NEMO_LOG=$T/nemo.log
 chmod +x "$T/bin/"*
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT" -o /dev/null && break; sleep 0.1; done
 
@@ -128,5 +137,26 @@ reset; serve 429:99
 "$S"; sleep 1; STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe STT_RETRIES=0 "$S" 2>/dev/null
 check "fallback also failing -> error, clipboard untouched" '[[ ! -s $T/clip ]] && grep -q "HTTP 429" $T/notify.log'
 serve ok
+
+echo "12) --local: private mode, never touches the network"
+reset; rm -f $T/nemo.log; serve 429:99   # any API call would fail loudly and be logged
+OPENROUTER_API_KEY= "$S" --local; sleep 1; check "mode remembered" '[[ $(cat $T/run/wayland-stt/mode) == local ]]'
+OPENROUTER_API_KEY= "$S" >/dev/null   # 2nd press without --local: mode comes from the 1st press
+check "clipboard has local transcript, key not needed" '[[ $(cat $T/clip) == "Lokal diktiert, 1250 Zahlen." ]]'
+check "no API request sent" '[[ ! -e $MOCK_LOG ]]'
+check "local model passed to nemo-speech" 'grep -q -- "-m parakeet-tdt" $T/nemo.log'
+check "banner says (lokal)" 'grep -q "In Zwischenablage kopiert (lokal)" $T/notify.log'
+check "temp files and mode cleaned up" '[[ ! -e $T/run/wayland-stt/mode && ! -e $T/run/wayland-stt/local.txt && ! -e $T/run/wayland-stt/busy ]]'
+
+echo "12b) local failure: error shown, no cloud fallback"
+reset; "$S" --local; sleep 1; FAKE_NEMO_FAIL=1 "$S" 2>/dev/null; rc=$?
+check "exit code != 0, error mentions stderr of the tool" '[[ $rc != 0 ]] && grep -q "Lokale Transkription fehlgeschlagen: CUDA kaputt" $T/notify.log'
+check "no API request, clipboard untouched" '[[ ! -e $MOCK_LOG && ! -e $T/clip ]]'
+reset; "$S" --local; sleep 1; STT_LOCAL_BIN=/nonexistent "$S" 2>/dev/null
+check "missing binary reported" 'grep -q "nicht gefunden (lokaler Modus)" $T/notify.log'
+
+echo "12c) mode is fixed by the first press"
+reset; serve ok; "$S"; sleep 1; "$S" --local >/dev/null
+check "cloud recording stays cloud even if stopped with --local" '[[ $(wc -l < $MOCK_LOG) == 1 ]] && grep -q "In Zwischenablage kopiert\$" $T/notify.log || grep -q "In Zwischenablage kopiert" $T/notify.log && ! grep -q "(lokal)" $T/notify.log'
 
 echo; echo "$pass passed, $fail failed"; exit $((fail > 0))

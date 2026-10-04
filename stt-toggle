@@ -15,6 +15,8 @@ CONFIG="${STT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/wayland-stt/config}"
 : "${STT_FALLBACK_MODEL=openai/gpt-4o-mini-transcribe}"  # tried once retries are exhausted; empty = off
 : "${STT_RETRIES:=5}"                       # retries on HTTP 429/5xx (waits: Retry-After, else 2,4,8,… s)
 : "${STT_CLIP:=wl-copy}"
+: "${STT_LOCAL_BIN:=nemo-speech}"           # `stt-toggle --local`: private mode, nothing leaves the machine
+: "${STT_LOCAL_MODEL:=parakeet-tdt}"
 
 STATE="${XDG_RUNTIME_DIR:-/tmp}/wayland-stt"
 PID="$STATE/rec.pid"
@@ -23,6 +25,8 @@ OGG="$STATE/rec.ogg"
 BUSY="$STATE/busy"
 REQ="$STATE/req.json"
 HDR="$STATE/resp.hdr"
+MODE="$STATE/mode"   # cloud|local, fixed by the press that starts the recording
+TXT="$STATE/local.txt"
 NID="$STATE/notify.id"
 mkdir -p -m 700 "$STATE"
 
@@ -36,11 +40,12 @@ notify() {
   rm -f "$NID.tmp"
 }
 
-fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY" "$REQ" "$HDR"; exit 1; }
+fail() { notify critical "Transkription fehlgeschlagen" "$1"; echo "stt-toggle: $1" >&2; rm -f "$BUSY" "$REQ" "$HDR" "$TXT"; exit 1; }
 
 start() {
   command -v "$STT_RECORDER" >/dev/null || fail "$STT_RECORDER nicht gefunden"
   rm -f "$WAV" "$OGG"
+  echo "$1" >"$MODE"
   setsid timeout "$STT_MAX_SECONDS" "$STT_RECORDER" --rate 16000 --channels 1 "$WAV" </dev/null >/dev/null 2>&1 &
   echo $! >"$PID"
 }
@@ -66,14 +71,8 @@ post_with_retries() {
   done
 }
 
-stop_and_transcribe() {
-  local pid; pid=$(cat "$PID"); rm -f "$PID"
-  touch "$BUSY"
-  kill -INT "$pid" 2>/dev/null
-  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-  kill -0 "$pid" 2>/dev/null && kill -TERM "$pid"
-
-  [[ -s $WAV ]] || fail "Keine Audiodaten aufgenommen"
+# Sets the caller's $text from the OpenRouter API.
+transcribe_cloud() {
   [[ -n ${OPENROUTER_API_KEY:-} ]] || fail "OPENROUTER_API_KEY fehlt in $CONFIG"
 
   # Opus shrinks the upload ~10x vs. WAV; fall back to WAV if ffmpeg is missing.
@@ -92,7 +91,7 @@ stop_and_transcribe() {
     + (if $ph != [] then {provider: {options: {azure: {phraseList: {phrases: $ph}}}}} else {} end)' >"$REQ" \
     || fail "Konnte Anfrage nicht erstellen"
 
-  local resp code text
+  local resp code
   post_with_retries
   if [[ $code == 429 || $code == 5?? ]] && [[ -n $STT_FALLBACK_MODEL && $STT_FALLBACK_MODEL != "$STT_MODEL" ]]; then
     notify normal "⏳ $STT_MODEL nicht erreichbar (HTTP $code)" "Weiche auf $STT_FALLBACK_MODEL aus"
@@ -102,12 +101,32 @@ stop_and_transcribe() {
   fi
   [[ $code == 200 ]] || fail "HTTP $code: $(jq -r '.error.message // .' <<<"$resp" 2>/dev/null | head -c 200)"
   text=$(jq -r '.text // empty' <<<"$resp" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+}
+
+# Sets the caller's $text from a local model; no network, no fallback.
+transcribe_local() {
+  command -v "$STT_LOCAL_BIN" >/dev/null || fail "$STT_LOCAL_BIN nicht gefunden (lokaler Modus)"
+  "$STT_LOCAL_BIN" transcribe "$WAV" -m "$STT_LOCAL_MODEL" -o "$TXT" >/dev/null 2>"$TXT.err" \
+    || fail "Lokale Transkription fehlgeschlagen: $(tail -c 200 "$TXT.err")"
+  text=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$TXT")
+}
+
+stop_and_transcribe() {
+  local pid; pid=$(cat "$PID"); rm -f "$PID"
+  touch "$BUSY"
+  kill -INT "$pid" 2>/dev/null
+  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$pid" 2>/dev/null && kill -TERM "$pid"
+
+  [[ -s $WAV ]] || fail "Keine Audiodaten aufgenommen"
+  local text mode; mode=$(cat "$MODE" 2>/dev/null)
+  if [[ $mode == local ]]; then transcribe_local; else transcribe_cloud; fi
   [[ -n $text ]] || fail "Leeres Transkript"
 
   printf %s "$text" | "$STT_CLIP" || fail "Konnte nicht in die Zwischenablage kopieren ($STT_CLIP)"
-  notify normal "✅ In Zwischenablage kopiert" "$(head -c 200 <<<"$text")"
+  notify normal "✅ In Zwischenablage kopiert$([[ $mode == local ]] && echo " (lokal)")" "$(head -c 200 <<<"$text")"
   [[ -t 1 ]] && printf '%s\n' "$text"   # not via the shortcut: stdout would land in the journal
-  rm -f "$BUSY" "$WAV" "$OGG" "$REQ" "$HDR"
+  rm -f "$BUSY" "$WAV" "$OGG" "$REQ" "$HDR" "$TXT" "$TXT.err" "$MODE"
 }
 
 if [[ -e $BUSY ]] && (( $(date +%s) - $(stat -c %Y "$BUSY") < 180 )); then
@@ -118,5 +137,5 @@ if [[ -s $PID ]] && kill -0 "$(cat "$PID")" 2>/dev/null; then
 elif [[ -s $PID && -s $WAV ]]; then
   stop_and_transcribe   # recorder hit STT_MAX_SECONDS; still send what we have
 else
-  start
+  start "$([[ ${1:-} == --local ]] && echo local || echo cloud)"
 fi
