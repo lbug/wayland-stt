@@ -112,7 +112,7 @@ transcribe_local() {
 }
 
 stop_and_transcribe() {
-  local pid; pid=$(cat "$PID"); rm -f "$PID"
+  local pid t0; pid=$(cat "$PID"); rm -f "$PID"; t0=$(date +%s.%N)
   touch "$BUSY"
   kill -INT "$pid" 2>/dev/null
   for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
@@ -125,6 +125,10 @@ stop_and_transcribe() {
 
   printf %s "$text" | "$STT_CLIP" || fail "Konnte nicht in die Zwischenablage kopieren ($STT_CLIP)"
   notify normal "✅ In Zwischenablage kopiert$([[ $mode == local ]] && echo " (lokal)")" "$(head -c 200 <<<"$text")"
+  # One journal line per dictation (stderr): path taken, model, audio length, time since the stop press.
+  local used=$STT_LOCAL_MODEL; [[ $mode == local ]] || used=$(jq -r .model "$REQ")
+  LC_ALL=C awk -v t0="$t0" -v now="$(date +%s.%N)" -v b="$(stat -c %s "$WAV")" -v n="${#text}" -v m="${mode:-cloud}" -v u="$used" \
+    'BEGIN { printf "stt-toggle: ok %s %s, %.1fs Audio, %.1fs, %d Zeichen\n", m, u, (b - 44) / 32000, now - t0, n }' >&2
   [[ -t 1 ]] && printf '%s\n' "$text"   # not via the shortcut: stdout would land in the journal
   rm -f "$BUSY" "$WAV" "$OGG" "$REQ" "$HDR" "$TXT" "$TXT.err" "$MODE"
 }

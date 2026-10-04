@@ -41,7 +41,8 @@ echo "1) happy path: press, press"
 reset; "$S"; sleep 1
 check "recorder running after 1st press" '[[ -s $T/run/wayland-stt/rec.pid ]] && kill -0 $(cat $T/run/wayland-stt/rec.pid)'
 check "no notification on start" '[[ ! -e $T/notify.log ]]'
-out=$("$S")
+out=$("$S" 2>$T/err1)
+check "journal line: cloud, model, audio length, duration" 'grep -q -E "^stt-toggle: ok cloud microsoft/mai-transcribe-2, [0-9.]+s Audio, [0-9.]+s, [0-9]+ Zeichen$" $T/err1'
 check "no transcript on non-tty stdout (keeps it out of the journal)" '[[ -z $out ]]'
 check "clipboard has trimmed text" '[[ $(cat $T/clip) == "Hallo Welt, äöü ß – Test." ]]'
 check "upload is JSON with base64 opus/ogg" 'grep -q "\"has_ogg\": true" $MOCK_LOG && grep -q "\"format\": \"ogg\"" $MOCK_LOG && grep -q application/json $MOCK_LOG'
@@ -141,10 +142,11 @@ serve ok
 echo "12) --local: private mode, never touches the network"
 reset; rm -f $T/nemo.log; serve 429:99   # any API call would fail loudly and be logged
 OPENROUTER_API_KEY= "$S" --local; sleep 1; check "mode remembered" '[[ $(cat $T/run/wayland-stt/mode) == local ]]'
-OPENROUTER_API_KEY= "$S" >/dev/null   # 2nd press without --local: mode comes from the 1st press
+OPENROUTER_API_KEY= "$S" >/dev/null 2>$T/err12   # 2nd press without --local: mode comes from the 1st press
 check "clipboard has local transcript, key not needed" '[[ $(cat $T/clip) == "Lokal diktiert, 1250 Zahlen." ]]'
 check "no API request sent" '[[ ! -e $MOCK_LOG ]]'
 check "local model passed to nemo-speech" 'grep -q -- "-m parakeet-tdt" $T/nemo.log'
+check "journal line says local + model" 'grep -q -E "^stt-toggle: ok local parakeet-tdt, [0-9.]+s Audio, [0-9.]+s, [0-9]+ Zeichen$" $T/err12'
 check "banner says (lokal)" 'grep -q "In Zwischenablage kopiert (lokal)" $T/notify.log'
 check "temp files and mode cleaned up" '[[ ! -e $T/run/wayland-stt/mode && ! -e $T/run/wayland-stt/local.txt && ! -e $T/run/wayland-stt/busy ]]'
 

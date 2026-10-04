@@ -31,6 +31,9 @@ Tested on Ubuntu 26.04 / GNOME 50 (Wayland). Requires PipeWire, `curl`, `jq`, `w
 - **Recording:** `pw-record` (PipeWire), 16 kHz mono, encoded to Opus before upload (~3 KB/s).
 - **API:** `POST https://openrouter.ai/api/v1/audio/transcriptions` (JSON, base64 audio). Private mode skips this and calls `nemo-speech` instead.
 - **Clipboard:** `wl-copy`. **Notification:** a banner when the text is ready (or on error); each one replaces the previous, so the tray holds a single entry. While recording, GNOME's own mic indicator shows in the top bar.
+- **Log:** every successful dictation writes one line to the journal (`journalctl --user | grep stt-toggle`):
+  `stt-toggle: ok local parakeet-tdt, 14.1s Audio, 0.9s, 253 Zeichen` (path taken, model, audio length,
+  time from the stop press to the finished text, text length). Failures and retries are logged too.
 - Safety: recording auto-stops after `STT_MAX_SECONDS` (600); presses during transcription are ignored. Rate limits (429) and server errors (5xx) are retried automatically, with a notification, so a long dictation isn't lost to a short throttle.
 
 ## Install
